@@ -15,13 +15,7 @@
  * @brief Application-level callback triggered when a WebSocket handshake
  * completes.
  */
-void my_on_open(ws_conn_t *conn) {
-  printf("[Server] New WebSocket connection opened.\n");
-
-  constexpr char welcome[] = "Welcome to the C WebSocket Echo Server!";
-  const auto welcome_len = strlen(welcome);
-  ws_conn_send(conn, (const uint8_t *)welcome, welcome_len, WS_OP_TEXT);
-}
+void my_on_open([[maybe_unused]] ws_conn_t *conn) { printf("[Server] New WebSocket connection opened.\n"); }
 
 /**
  * @brief Application-level callback triggered when a message is received.
@@ -29,14 +23,20 @@ void my_on_open(ws_conn_t *conn) {
  */
 void my_on_message(ws_conn_t *conn, const uint8_t *data, size_t len,
                    ws_opcode_t opcode) {
-  // Print the received message (assuming TEXT for this simple demo)
+  // Respond to simple text ping with pong, otherwise echo.
+  if (opcode == WS_OP_TEXT && len == 4U &&
+      memcmp(data, "ping", 4U) == 0) {
+    constexpr char pong[] = "pong";
+    ws_conn_send(conn, (const uint8_t *)pong, sizeof(pong) - 1U, WS_OP_TEXT);
+    return;
+  }
+
   if (opcode == WS_OP_TEXT) {
     printf("[Server] Received: %.*s\n", (int)len, (const char *)data);
   } else {
     printf("[Server] Received binary data of length: %zu\n", len);
   }
 
-  // Echo logic: Send the exact same data back
   ws_conn_send(conn, data, len, opcode);
 }
 

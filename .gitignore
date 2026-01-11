@@ -1,5 +1,5 @@
 # Zig build outputs
-zig-out/
+zig-*/
 .zig-cache/
 
 # Compiled binaries and objects

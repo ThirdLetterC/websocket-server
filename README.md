@@ -3,7 +3,10 @@
 Minimal WebSocket server skeleton written in strict C23 with a libuv transport layer and built with Zig. The code separates protocol handling from the event loop via a small transport interface and exposes simple application callbacks for `on_open`, `on_message`, and `on_close`.
 
 ## Status and Limitations
-- Protocol handling is a stub: there is no HTTP handshake, no masking validation, and no WebSocket frame parsing. Incoming bytes are delivered directly to the `on_message` callback, and `ws_conn_send` writes raw bytes back.
+- Implements the HTTP Upgrade handshake (Sec-WebSocket-Key/SHA1+Base64) and validates required headers.
+- Parses WebSocket frames with masking validation for client messages, handles text/binary payloads, ping/pong, and close control frames.
+- Server replies are framed (FIN set, unmasked) for text/binary/close/pong responses.
+- Fragmented data frames are not supported and will be closed with protocol error; payloads are capped at 1 MiB to avoid unbounded buffering.
 - Suitable as a starting point for experimenting with libuv and C23 patterns, not for production use.
 - No TLS or authentication; connections are plain TCP.
 
