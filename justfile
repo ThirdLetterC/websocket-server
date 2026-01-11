@@ -7,7 +7,7 @@ default:
 
 # Build the project using Zig
 build:
-	zig build
+	zig build -Dcpu=x86_64_v2
 
 # Run the server (accepts optional port argument)
 run p=port:
@@ -15,7 +15,7 @@ run p=port:
 
 # Clean build artifacts
 clean:
-	rm -rf zig-out zig-cache
+	rm -rf zig-out zig-cache .zig-cache
 
 # Install dependencies (Ubuntu/Debian example)
 deps-apt:
@@ -27,7 +27,7 @@ deps-brew:
 
 # Check C code for memory leaks using Valgrind (Linux only)
 check-leaks: build
-	valgrind --leak-check=full ./zig-out/bin/ws_server {{port}}
+	valgrind --leak-check=full --show-leak-kinds=all ./zig-out/bin/ws_server {{port}}
 
 # Test the WebSocket connection using wscat (requires npm install -g wscat)
 test-client:
@@ -36,4 +36,4 @@ test-client:
 # Format all source files
 fmt:
 	zig fmt build.zig
-	clang-format -i *.c *.h
+	clang-format -i src/*.c src/*.h

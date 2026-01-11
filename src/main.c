@@ -1,65 +1,101 @@
+#include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "websocket.h"
+#include <uv.h>
+
 #include "server.h"
+#include "websocket.h"
 
 /**
- * @brief Application-level callback triggered when a WebSocket handshake completes.
+ * @brief Application-level callback triggered when a WebSocket handshake
+ * completes.
  */
 void my_on_open(ws_conn_t *conn) {
-    printf("[Server] New WebSocket connection opened.\n");
-    
-    const char *welcome = "Welcome to the C WebSocket Echo Server!";
-    ws_conn_send(conn, (const uint8_t*)welcome, strlen(welcome), WS_OP_TEXT);
+  printf("[Server] New WebSocket connection opened.\n");
+
+  constexpr char welcome[] = "Welcome to the C WebSocket Echo Server!";
+  const auto welcome_len = strlen(welcome);
+  ws_conn_send(conn, (const uint8_t *)welcome, welcome_len, WS_OP_TEXT);
 }
 
 /**
  * @brief Application-level callback triggered when a message is received.
  * Logic: Echoes the message back to the client with a prefix.
  */
-void my_on_message(ws_conn_t *conn, const uint8_t *data, size_t len, ws_opcode_t opcode) {
-    // Print the received message (assuming TEXT for this simple demo)
-    if (opcode == WS_OP_TEXT) {
-        printf("[Server] Received: %.*s\n", (int)len, (const char*)data);
-    } else {
-        printf("[Server] Received binary data of length: %zu\n", len);
-    }
+void my_on_message(ws_conn_t *conn, const uint8_t *data, size_t len,
+                   ws_opcode_t opcode) {
+  // Print the received message (assuming TEXT for this simple demo)
+  if (opcode == WS_OP_TEXT) {
+    printf("[Server] Received: %.*s\n", (int)len, (const char *)data);
+  } else {
+    printf("[Server] Received binary data of length: %zu\n", len);
+  }
 
-    // Echo logic: Send the exact same data back
-    ws_conn_send(conn, data, len, opcode);
+  // Echo logic: Send the exact same data back
+  ws_conn_send(conn, data, len, opcode);
 }
 
 /**
  * @brief Application-level callback triggered when the connection is closed.
  */
-void my_on_close(ws_conn_t *conn) {
-    (void)conn;
-    printf("[Server] WebSocket connection closed.\n");
+void my_on_close([[maybe_unused]] ws_conn_t *conn) {
+  printf("[Server] WebSocket connection closed.\n");
+}
+
+static void on_signal(uv_signal_t *handle, int signum) {
+  (void)signum;
+  printf("[Server] Shutdown signal received, closing...\n");
+  (void)uv_signal_stop(handle);
+  uv_close((uv_handle_t *)handle, nullptr);
+  server_request_shutdown();
 }
 
 int main(int argc, char **argv) {
-    int port = 8080;
-    if (argc > 1) {
-        port = atoi(argv[1]);
+  constexpr int32_t DEFAULT_PORT = 8'080;
+  auto port = DEFAULT_PORT;
+  if (argc > 1) {
+    char *end = nullptr;
+    errno = 0;
+    const auto parsed = strtol(argv[1], &end, 10);
+    const bool valid = (errno == 0) && (end != argv[1]) && (*end == '\0');
+    if (valid && parsed > 0 && parsed <= INT32_MAX) {
+      port = (int32_t)parsed;
+    } else {
+      fprintf(stderr, "Invalid port '%s', falling back to %" PRId32 "\n",
+              argv[1], port);
     }
+  }
 
-    // 1. Define application callbacks
-    ws_callbacks_t callbacks = {
-        .on_open = my_on_open,
-        .on_message = my_on_message,
-        .on_close = my_on_close
-    };
+  // 1. Define application callbacks
+  ws_callbacks_t callbacks = {.on_open = my_on_open,
+                              .on_message = my_on_message,
+                              .on_close = my_on_close};
 
-    /**
-     * NOTE: In a full implementation, you would pass these callbacks 
-     * into the server initialization. Here, we assume the server 
-     * start logic (provided in the previous turn) uses these.
-     */
-    printf("Starting WebSocket Echo Server on port %d...\n", port);
-    
-    // For this demonstration, we call the placeholder start function
-    start_ws_server(port, callbacks);
+  /**
+   * NOTE: In a full implementation, you would pass these callbacks
+   * into the server initialization. Here, we assume the server
+   * start logic (provided in the previous turn) uses these.
+   */
+  printf("Starting WebSocket Echo Server on port %" PRId32 "...\n", port);
 
-    return 0;
+  auto loop = uv_default_loop();
+  uv_signal_t sigint_handle;
+  uv_signal_t sigterm_handle;
+
+  if (uv_signal_init(loop, &sigint_handle) == 0) {
+    (void)uv_signal_start(&sigint_handle, on_signal, SIGINT);
+  }
+  if (uv_signal_init(loop, &sigterm_handle) == 0) {
+    (void)uv_signal_start(&sigterm_handle, on_signal, SIGTERM);
+  }
+
+  // For this demonstration, we call the placeholder start function
+  start_ws_server(port, callbacks);
+
+  return 0;
 }

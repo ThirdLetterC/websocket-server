@@ -1,7 +1,8 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // Standard target options (arch, os, abi)
+    // Standard target options (arch, os, abi). We rely on C flags below to pin
+    // the ISA to a Valgrind-friendly baseline without forcing a cross target.
     const target = b.standardTargetOptions(.{});
 
     // Standard optimization options (Debug, ReleaseSafe, ReleaseFast, ReleaseSmall)
@@ -15,6 +16,36 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const enable_sanitizers = b.option(bool, "sanitizers", "Enable ASan/UBSan/LSan in Debug builds.") orelse false;
+    const use_sanitizers = enable_sanitizers and optimize == .Debug;
+
+    const common_flags = &[_][]const u8{
+        "-march=x86-64",
+        "-mtune=generic",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-std=c23",
+        "-D_GNU_SOURCE",
+    };
+
+    const debug_flags = &[_][]const u8{
+        "-march=x86-64",
+        "-mtune=generic",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-std=c23",
+        "-D_GNU_SOURCE",
+        "-fsanitize=address",
+        "-fsanitize=undefined",
+        "-fsanitize=leak",
+    };
+
+    const c_flags = if (use_sanitizers) debug_flags else common_flags;
+
     // Add C source files
     exe.addCSourceFiles(.{
         .root = b.path("src"),
@@ -23,12 +54,7 @@ pub fn build(b: *std.Build) void {
             "server.c",
             "websocket.c",
         },
-        .flags = &.{
-            "-Wall",
-            "-Wextra",
-            "-std=c23",
-            "-D_GNU_SOURCE",
-        },
+        .flags = c_flags,
     });
 
     // Include the current directory for headers
@@ -40,6 +66,11 @@ pub fn build(b: *std.Build) void {
 
     // Link against the C standard library
     exe.linkLibC();
+
+    if (use_sanitizers) {
+        exe.bundle_compiler_rt = true;
+        exe.bundle_ubsan_rt = true;
+    }
 
     // If you add crypto for handshakes (e.g., OpenSSL), link it here:
     // exe.linkSystemLibrary("ssl");
