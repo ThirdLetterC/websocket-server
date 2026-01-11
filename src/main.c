@@ -15,7 +15,9 @@
  * @brief Application-level callback triggered when a WebSocket handshake
  * completes.
  */
-void my_on_open([[maybe_unused]] ws_conn_t *conn) { printf("[Server] New WebSocket connection opened.\n"); }
+void my_on_open([[maybe_unused]] ws_conn_t *conn) {
+  printf("[Server] New WebSocket connection opened.\n");
+}
 
 /**
  * @brief Application-level callback triggered when a message is received.
@@ -24,8 +26,7 @@ void my_on_open([[maybe_unused]] ws_conn_t *conn) { printf("[Server] New WebSock
 void my_on_message(ws_conn_t *conn, const uint8_t *data, size_t len,
                    ws_opcode_t opcode) {
   // Respond to simple text ping with pong, otherwise echo.
-  if (opcode == WS_OP_TEXT && len == 4U &&
-      memcmp(data, "ping", 4U) == 0) {
+  if (opcode == WS_OP_TEXT && len == 4U && memcmp(data, "ping", 4U) == 0) {
     constexpr char pong[] = "pong";
     ws_conn_send(conn, (const uint8_t *)pong, sizeof(pong) - 1U, WS_OP_TEXT);
     return;

@@ -229,8 +229,7 @@ static bool base64_encode(const uint8_t *input, size_t len, char *out,
     const uint32_t octet_b = (i + 1U < len) ? input[i + 1U] : 0U;
     const uint32_t octet_c = (i + 2U < len) ? input[i + 2U] : 0U;
 
-    const uint32_t triple =
-        (octet_a << 16U) | (octet_b << 8U) | octet_c;
+    const uint32_t triple = (octet_a << 16U) | (octet_b << 8U) | octet_c;
 
     out[o++] = table[(triple >> 18U) & 0x3FU];
     out[o++] = table[(triple >> 12U) & 0x3FU];
@@ -269,12 +268,11 @@ static bool send_handshake_response(ws_conn_t *conn, const char *accept_key) {
   if (conn->transport.send_raw == nullptr) {
     return false;
   }
-  constexpr char RESPONSE_FMT[] =
-      "HTTP/1.1 101 Switching Protocols\r\n"
-      "Upgrade: websocket\r\n"
-      "Connection: Upgrade\r\n"
-      "Sec-WebSocket-Accept: %s\r\n"
-      "\r\n";
+  constexpr char RESPONSE_FMT[] = "HTTP/1.1 101 Switching Protocols\r\n"
+                                  "Upgrade: websocket\r\n"
+                                  "Connection: Upgrade\r\n"
+                                  "Sec-WebSocket-Accept: %s\r\n"
+                                  "\r\n";
 
   char response[256];
   const int written =
@@ -334,8 +332,9 @@ static bool handle_handshake(ws_conn_t *conn) {
 
   size_t header_end = 0U;
   for (size_t i = 3U; i < conn->inbound.len; ++i) {
-    if (conn->inbound.data[i - 3U] == '\r' && conn->inbound.data[i - 2U] == '\n'
-        && conn->inbound.data[i - 1U] == '\r' && conn->inbound.data[i] == '\n') {
+    if (conn->inbound.data[i - 3U] == '\r' &&
+        conn->inbound.data[i - 2U] == '\n' &&
+        conn->inbound.data[i - 1U] == '\r' && conn->inbound.data[i] == '\n') {
       header_end = i + 1U;
       break;
     }
@@ -411,8 +410,7 @@ static bool handle_handshake(ws_conn_t *conn) {
   uint8_t digest[SHA1_DIGEST_SIZE];
   sha1_ctx_t sha_ctx;
   sha1_init(&sha_ctx);
-  sha1_update(&sha_ctx, (const uint8_t *)concatenated,
-              (size_t)concat_written);
+  sha1_update(&sha_ctx, (const uint8_t *)concatenated, (size_t)concat_written);
   sha1_final(&sha_ctx, digest);
 
   char accept_key[64];
@@ -487,8 +485,8 @@ static void process_frames(ws_conn_t *conn) {
       if (conn->inbound.len < 4U) {
         return;
       }
-      payload_len = ((uint64_t)conn->inbound.data[2] << 8U) |
-                    conn->inbound.data[3];
+      payload_len =
+          ((uint64_t)conn->inbound.data[2] << 8U) | conn->inbound.data[3];
       header_len += 2U;
     } else if (payload_len == 127U) {
       if (conn->inbound.len < 10U) {
@@ -524,8 +522,7 @@ static void process_frames(ws_conn_t *conn) {
     const uint8_t *mask_key = conn->inbound.data + (header_len - 4U);
     const uint8_t *payload = conn->inbound.data + header_len;
 
-    const size_t alloc_size =
-        payload_len == 0U ? 1U : (size_t)payload_len;
+    const size_t alloc_size = payload_len == 0U ? 1U : (size_t)payload_len;
     auto decoded = (uint8_t *)calloc(alloc_size, sizeof(uint8_t));
     if (decoded == nullptr) {
       handle_close(conn, 1011U);
