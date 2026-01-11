@@ -1,0 +1,13 @@
+# Zig build outputs
+zig-out/
+.zig-cache/
+
+# Compiled binaries and objects
+*.o
+*.obj
+*.exe
+*.out
+
+# Editor settings
+.vscode/
+*.swp
