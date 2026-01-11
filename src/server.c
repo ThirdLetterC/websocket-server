@@ -7,6 +7,7 @@
 #include <uv.h>
 
 #include "websocket.h"
+#include "server.h"
 
 constexpr size_t READ_CHUNK = 4'096;
 
@@ -23,6 +24,16 @@ typedef struct {
     ws_conn_t *ws;
     ws_transport_t transport;
 } client_ctx_t;
+
+static ws_callbacks_t g_callbacks;
+
+void server_set_callbacks(ws_callbacks_t callbacks) {
+    g_callbacks = callbacks;
+}
+
+ws_callbacks_t server_get_callbacks() {
+    return g_callbacks;
+}
 
 static void on_uv_write(uv_write_t *req, int status) {
     (void)status;
@@ -97,13 +108,7 @@ static void on_new_connection(uv_stream_t *server, int status) {
         ctx->transport.send_raw = transport_send_raw;
         ctx->transport.close = transport_close;
 
-        ws_callbacks_t callbacks = {
-            .on_open = nullptr,
-            .on_message = nullptr,
-            .on_close = nullptr,
-        };
-
-        ctx->ws = ws_conn_new(ctx->transport, callbacks, nullptr);
+        ctx->ws = ws_conn_new(ctx->transport, server_get_callbacks(), nullptr);
         if (ctx->ws == nullptr) {
             transport_close(&ctx->transport);
             return;
@@ -115,7 +120,8 @@ static void on_new_connection(uv_stream_t *server, int status) {
     }
 }
 
-void start_ws_server(int port) {
+void start_ws_server(int port, ws_callbacks_t callbacks) {
+    server_set_callbacks(callbacks);
     auto *loop = uv_default_loop();
     uv_tcp_t server;
     uv_tcp_init(loop, &server);

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "websocket.h"
+#include "server.h"
 
 /**
  * @brief Application-level callback triggered when a WebSocket handshake completes.
@@ -33,6 +34,7 @@ void my_on_message(ws_conn_t *conn, const uint8_t *data, size_t len, ws_opcode_t
  * @brief Application-level callback triggered when the connection is closed.
  */
 void my_on_close(ws_conn_t *conn) {
+    (void)conn;
     printf("[Server] WebSocket connection closed.\n");
 }
 
@@ -56,12 +58,8 @@ int main(int argc, char **argv) {
      */
     printf("Starting WebSocket Echo Server on port %d...\n", port);
     
-    // External function from the libuv_ws_server implementation
-    // This function initializes libuv, binds the socket, and handles the loop.
-    // void start_ws_server(int port, ws_callbacks_t callbacks);
-    
     // For this demonstration, we call the placeholder start function
-    // start_ws_server(port, callbacks);
+    start_ws_server(port, callbacks);
 
     return 0;
 }
