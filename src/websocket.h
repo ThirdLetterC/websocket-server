@@ -54,6 +54,7 @@ typedef struct {
 
 /**
  * @brief Initialize a new WebSocket connection context.
+ * @return Owning pointer; caller must call ws_conn_free when done.
  */
 [[nodiscard]] ws_conn_t *ws_conn_new(ws_transport_t transport,
                                      ws_callbacks_t callbacks,
@@ -78,6 +79,7 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
 
 /**
  * @brief Get user-defined context associated with the connection.
+ * @return Non-owning pointer previously provided by the application.
  */
 [[nodiscard]] void *ws_conn_get_context(ws_conn_t *conn);
 

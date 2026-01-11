@@ -11,6 +11,13 @@ constexpr size_t MAX_CONTROL_PAYLOAD = 125U;
 constexpr size_t MAX_MESSAGE_PAYLOAD = 1'048'576U; // 1 MiB upper bound
 constexpr size_t SHA1_BLOCK_SIZE = 64U;
 constexpr size_t SHA1_DIGEST_SIZE = 20U;
+constexpr size_t CLOSE_CODE_LEN = 2U;
+constexpr size_t CLOSE_FRAME_LEN = 4U;
+constexpr size_t FRAME_HEADER_MAX = 10U;
+constexpr size_t HANDSHAKE_RESPONSE_MAX = 256U;
+constexpr size_t ACCEPT_KEY_MAX = 64U;
+constexpr size_t SEC_KEY_MAX = 128U;
+constexpr size_t CONCAT_KEY_MAX = 256U;
 constexpr char WS_GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 typedef struct {
@@ -274,7 +281,7 @@ static bool send_handshake_response(ws_conn_t *conn, const char *accept_key) {
                                   "Sec-WebSocket-Accept: %s\r\n"
                                   "\r\n";
 
-  char response[256];
+  char response[HANDSHAKE_RESPONSE_MAX];
   const int written =
       snprintf(response, sizeof(response), RESPONSE_FMT, accept_key);
   if (written <= 0 || (size_t)written >= sizeof(response)) {
@@ -303,11 +310,11 @@ static void send_close_frame(ws_conn_t *conn, uint16_t code) {
     return;
   }
 
-  uint8_t payload[2];
+  uint8_t payload[CLOSE_CODE_LEN];
   payload[0] = (uint8_t)((code >> 8U) & 0xFFU);
   payload[1] = (uint8_t)(code & 0xFFU);
 
-  uint8_t frame[4];
+  uint8_t frame[CLOSE_FRAME_LEN];
   frame[0] = 0x88U; // FIN + CLOSE
   frame[1] = 0x02U;
   frame[2] = payload[0];
@@ -325,6 +332,7 @@ static void handle_close(ws_conn_t *conn, uint16_t code) {
   }
 }
 
+[[nodiscard]]
 static bool handle_handshake(ws_conn_t *conn) {
   if (conn->inbound.len < 4U) {
     return false;
@@ -363,7 +371,7 @@ static bool handle_handshake(ws_conn_t *conn) {
   bool has_upgrade = false;
   bool has_connection = false;
   bool version_ok = false;
-  char sec_key[128] = {0};
+  char sec_key[SEC_KEY_MAX] = {0};
 
   while ((line = strtok(nullptr, "\r\n")) != nullptr) {
     char *colon = strchr(line, ':');
@@ -398,7 +406,7 @@ static bool handle_handshake(ws_conn_t *conn) {
     return false;
   }
 
-  char concatenated[256];
+  char concatenated[CONCAT_KEY_MAX];
   const int concat_written =
       snprintf(concatenated, sizeof(concatenated), "%s%s", sec_key, WS_GUID);
   if (concat_written <= 0 || (size_t)concat_written >= sizeof(concatenated)) {
@@ -413,7 +421,7 @@ static bool handle_handshake(ws_conn_t *conn) {
   sha1_update(&sha_ctx, (const uint8_t *)concatenated, (size_t)concat_written);
   sha1_final(&sha_ctx, digest);
 
-  char accept_key[64];
+  char accept_key[ACCEPT_KEY_MAX];
   const bool encoded =
       base64_encode(digest, SHA1_DIGEST_SIZE, accept_key, sizeof(accept_key));
   if (!encoded || accept_key[0] == '\0' ||
@@ -647,8 +655,7 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
       conn->state != WS_STATE_OPEN) {
     return;
   }
-  const size_t header_max = 10U;
-  const size_t frame_size = header_max + len;
+  const size_t frame_size = FRAME_HEADER_MAX + len;
   auto frame = (uint8_t *)calloc(frame_size, sizeof(uint8_t));
   if (frame == nullptr) {
     handle_close(conn, 1011U);

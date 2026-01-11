@@ -15,8 +15,7 @@ static uv_loop_t *g_loop = nullptr;
 static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
 
-static void close_handle(uv_handle_t *handle, void *arg) {
-  (void)arg;
+static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
   if (!uv_is_closing(handle)) {
     uv_close(handle, nullptr);
   }
@@ -53,8 +52,7 @@ void server_request_shutdown() {
 
 [[nodiscard]] ws_callbacks_t server_get_callbacks() { return g_callbacks; }
 
-static void on_uv_write(uv_write_t *req, int status) {
-  (void)status;
+static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
   auto ctx = (write_ctx_t *)req;
   free(ctx->buffer);
   free(ctx);
@@ -101,10 +99,8 @@ static void transport_close(ws_transport_t *self) {
   uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
 }
 
-static void on_uv_alloc(uv_handle_t *handle, size_t suggested_size,
-                        uv_buf_t *buf) {
-  (void)suggested_size;
-  (void)handle;
+static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
+                        size_t suggested_size [[maybe_unused]], uv_buf_t *buf) {
   buf->base = (char *)calloc(READ_CHUNK, sizeof(uint8_t));
   buf->len = buf->base == nullptr ? 0U : (unsigned int)READ_CHUNK;
 }

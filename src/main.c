@@ -48,8 +48,7 @@ void my_on_close([[maybe_unused]] ws_conn_t *conn) {
   printf("[Server] WebSocket connection closed.\n");
 }
 
-static void on_signal(uv_signal_t *handle, int signum) {
-  (void)signum;
+static void on_signal(uv_signal_t *handle, int signum [[maybe_unused]]) {
   printf("[Server] Shutdown signal received, closing...\n");
   (void)uv_signal_stop(handle);
   uv_close((uv_handle_t *)handle, nullptr);
