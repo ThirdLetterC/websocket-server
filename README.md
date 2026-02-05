@@ -1,14 +1,18 @@
 # WebSocket Server (C23 + libuv)
 
-Minimal WebSocket server skeleton written in strict C23 with a libuv transport layer and built with Zig. The code separates protocol handling from the event loop via a small transport interface and exposes simple application callbacks for `on_open`, `on_message`, and `on_close`.
+Minimal WebSocket echo server written in strict C23 with a libuv transport layer and built with Zig. Protocol handling is separated from the event loop via a small transport interface and exposed to the application through `on_open`, `on_message`, and `on_close` callbacks.
 
-## Status and Limitations
-- Implements the HTTP Upgrade handshake (Sec-WebSocket-Key/SHA1+Base64) and validates required headers.
-- Parses WebSocket frames with masking validation for client messages, handles text/binary payloads, ping/pong, and close control frames.
+## Features
+- HTTP Upgrade handshake with Sec-WebSocket-Key SHA1 + Base64 response and required header validation.
+- Frame parsing with client masking enforcement, control frames (ping/pong/close), and text/binary payload delivery.
 - Server replies are framed (FIN set, unmasked) for text/binary/close/pong responses.
-- Fragmented data frames are not supported and will be closed with protocol error; payloads are capped at 1 MiB to avoid unbounded buffering.
+- Echo behavior: logs text/binary messages and echoes payloads; a text message of `ping` receives a `pong` reply.
+
+## Limitations
+- Fragmented data frames are not supported; continuation frames are closed with a protocol error.
+- Payloads are capped at 1 MiB to avoid unbounded buffering; control frames are limited to 125 bytes.
+- No TLS, authentication, permessage-deflate, or extensions; connections are plain TCP.
 - Suitable as a starting point for experimenting with libuv and C23 patterns, not for production use.
-- No TLS or authentication; connections are plain TCP.
 
 ## Prerequisites
 - Zig (for the build system) and a C toolchain that supports `-std=c23`.
@@ -24,15 +28,16 @@ Minimal WebSocket server skeleton written in strict C23 with a libuv transport l
 - Start the server on the default port 8080: `just run` or `zig build run`.
 - Choose a port: `zig build run -- 9090` or `just run p=9090`.
 - Shutdown signals: SIGINT/SIGTERM trigger a graceful loop stop.
-- The server emits a console log on new connections and echoes raw data back.
+- The server logs connections, message receipt, and close events to stdout.
 
-## Testing (lightweight)
-- Manual byte echo with `wscat` or similar tools may fail because the WebSocket handshake is not implemented. For now, you can connect with a raw TCP client (e.g., `nc localhost 8080`) and observe echoed bytes.
-- A simple k6 script (`test/ws_test.js`) is included as a placeholder load test once proper WebSocket framing is added.
+## Quick Test
+- Connect with a WebSocket client: `wscat -c ws://localhost:8080`.
+- Send `ping` to receive `pong`, or send any text/binary payload to see it echoed.
+- A basic k6 script is available at `test/ws_test.js` for light load checks.
 
 ## Project Layout
 - `src/main.c` — wires CLI args, signal handling, and application callbacks.
 - `src/server.c` — libuv server setup, connection lifecycle, and transport glue.
-- `src/websocket.c` / `src/websocket.h` — protocol stubs and callback surfaces.
+- `src/websocket.c` / `include/websocket-server/websocket.h` — protocol handling, framing, and callbacks.
 - `build.zig` — Zig build graph, compiler flags (`-std=c23 -Wall -Wextra -Wpedantic -Werror`), and sanitizer toggles.
 - `justfile` — helper tasks for build, run, deps, format, and leak checks.
