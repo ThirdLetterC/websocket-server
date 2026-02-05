@@ -4,5 +4,4 @@
 -Wextra
 -Wpedantic
 -Werror
--pthread
 -Iinclude
