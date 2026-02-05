@@ -15,12 +15,6 @@ static uv_loop_t *g_loop = nullptr;
 static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
 
-static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
-  if (!uv_is_closing(handle)) {
-    uv_close(handle, nullptr);
-  }
-}
-
 typedef struct {
   uv_write_t req;
   uint8_t *buffer;
@@ -34,6 +28,30 @@ typedef struct {
   ws_conn_t *ws;
   ws_transport_t transport;
 } client_ctx_t;
+
+static void on_uv_client_closed(uv_handle_t *handle);
+
+static bool is_client_handle(uv_handle_t *handle) {
+  if (uv_handle_get_type(handle) != UV_TCP) {
+    return false;
+  }
+  if (handle == (uv_handle_t *)&g_server) {
+    return false;
+  }
+  auto ctx = (client_ctx_t *)handle->data;
+  return ctx != nullptr && &ctx->tcp == (uv_tcp_t *)handle;
+}
+
+static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
+  if (uv_is_closing(handle)) {
+    return;
+  }
+  if (is_client_handle(handle)) {
+    uv_close(handle, on_uv_client_closed);
+    return;
+  }
+  uv_close(handle, nullptr);
+}
 
 static ws_callbacks_t g_callbacks = {
     .on_open = nullptr, .on_message = nullptr, .on_close = nullptr};
@@ -87,16 +105,25 @@ static void transport_send_raw(ws_transport_t *self, const uint8_t *data,
 
 static void on_uv_client_closed(uv_handle_t *handle) {
   auto ctx = (client_ctx_t *)handle->data;
-  if (ctx->ws != nullptr) {
-    ws_conn_free(ctx->ws);
-    ctx->ws = nullptr;
+  if (ctx != nullptr) {
+    if (ctx->ws != nullptr) {
+      ws_conn_free(ctx->ws);
+      ctx->ws = nullptr;
+    }
+    free(ctx);
   }
-  free(ctx);
 }
 
 static void transport_close(ws_transport_t *self) {
   auto ctx = (client_ctx_t *)self->user_data;
-  uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
+  if (ctx == nullptr) {
+    return;
+  }
+  auto handle = (uv_handle_t *)&ctx->tcp;
+  if (uv_is_closing(handle)) {
+    return;
+  }
+  uv_close(handle, on_uv_client_closed);
 }
 
 static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
@@ -152,7 +179,7 @@ static void on_new_connection(uv_stream_t *server, int status) {
       transport_close(&ctx->transport);
     }
   } else {
-    free(ctx);
+    uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
   }
 }
 
@@ -164,42 +191,52 @@ void start_ws_server(int32_t port, ws_callbacks_t callbacks) {
 
   g_shutdown_requested = false;
   g_loop = uv_default_loop();
+  int run_status = 0;
+
   const int tcp_status = uv_tcp_init(g_loop, &g_server);
   if (tcp_status != 0) {
     fprintf(stderr, "uv_tcp_init failed: %s\n", uv_strerror(tcp_status));
-    return;
+    goto cleanup;
   }
+  g_server.data = nullptr;
 
   struct sockaddr_in addr;
   const int addr_status = uv_ip4_addr("0.0.0.0", (int)port, &addr);
   if (addr_status != 0) {
     fprintf(stderr, "uv_ip4_addr failed: %s\n", uv_strerror(addr_status));
-    return;
+    goto cleanup;
   }
   const int bind_status =
       uv_tcp_bind(&g_server, (const struct sockaddr *)&addr, 0);
   if (bind_status != 0) {
     fprintf(stderr, "uv_tcp_bind failed: %s\n", uv_strerror(bind_status));
-    return;
+    goto cleanup;
   }
 
   const int listen_status =
       uv_listen((uv_stream_t *)&g_server, 128, on_new_connection);
   if (listen_status != 0) {
     fprintf(stderr, "uv_listen failed: %s\n", uv_strerror(listen_status));
-    return;
+    goto cleanup;
   }
 
-  int run_status = uv_run(g_loop, UV_RUN_DEFAULT);
+  run_status = uv_run(g_loop, UV_RUN_DEFAULT);
   if (g_shutdown_requested) {
     // Drain close callbacks to free contexts before exit.
     run_status = uv_run(g_loop, UV_RUN_DEFAULT);
+  }
+
+cleanup:
+  if (!g_shutdown_requested && g_loop != nullptr) {
+    uv_walk(g_loop, close_handle, nullptr);
+    (void)uv_run(g_loop, UV_RUN_DEFAULT);
   }
 
   const int loop_status = uv_loop_close(g_loop);
   if (loop_status != 0) {
     fprintf(stderr, "uv_loop_close failed: %s\n", uv_strerror(loop_status));
   }
+  g_loop = nullptr;
 
   if (run_status != 0) {
     fprintf(stderr, "uv_run exited with active handles (%d).\n", run_status);

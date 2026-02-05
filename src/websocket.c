@@ -18,6 +18,7 @@ constexpr size_t HANDSHAKE_RESPONSE_MAX = 256U;
 constexpr size_t ACCEPT_KEY_MAX = 64U;
 constexpr size_t SEC_KEY_MAX = 128U;
 constexpr size_t CONCAT_KEY_MAX = 256U;
+constexpr size_t MAX_HANDSHAKE_HEADER = 8'192U;
 constexpr char WS_GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 typedef struct {
@@ -63,7 +64,14 @@ static bool ws_buffer_reserve(ws_buffer_t *buffer, size_t desired) {
 
   auto new_cap = buffer->cap == 0U ? INITIAL_BUFFER_CAP : buffer->cap;
   while (new_cap < desired) {
+    if (new_cap > SIZE_MAX / 2U) {
+      new_cap = desired;
+      break;
+    }
     new_cap *= 2U;
+  }
+  if (new_cap < desired) {
+    return false;
   }
 
   auto new_data = (uint8_t *)calloc(new_cap, sizeof(uint8_t));
@@ -71,8 +79,10 @@ static bool ws_buffer_reserve(ws_buffer_t *buffer, size_t desired) {
     return false;
   }
 
-  if (buffer->data != nullptr && buffer->len > 0U) {
-    memcpy(new_data, buffer->data, buffer->len);
+  if (buffer->data != nullptr) {
+    if (buffer->len > 0U) {
+      memcpy(new_data, buffer->data, buffer->len);
+    }
     free(buffer->data);
   }
 
@@ -86,6 +96,9 @@ static bool ws_buffer_append(ws_buffer_t *buffer, const uint8_t *data,
                              size_t len) {
   if (len == 0U) {
     return true;
+  }
+  if (len > SIZE_MAX - buffer->len) {
+    return false;
   }
   const size_t required = buffer->len + len;
   if (!ws_buffer_reserve(buffer, required)) {
@@ -349,6 +362,10 @@ static bool handle_handshake(ws_conn_t *conn) {
   }
 
   if (header_end == 0U) {
+    if (conn->inbound.len > MAX_HANDSHAKE_HEADER) {
+      conn->state = WS_STATE_CLOSING;
+      send_http_error_and_close(conn);
+    }
     return false;
   }
 
@@ -384,13 +401,13 @@ static bool handle_handshake(ws_conn_t *conn) {
       ++value;
     }
 
-    if (strncasecmp(line, "Upgrade", 7) == 0) {
-      has_upgrade = (strncasecmp(value, "websocket", 9) == 0);
-    } else if (strncasecmp(line, "Connection", 10) == 0) {
+    if (strcasecmp(line, "Upgrade") == 0) {
+      has_upgrade = contains_token(value, "websocket");
+    } else if (strcasecmp(line, "Connection") == 0) {
       has_connection = contains_token(value, "Upgrade");
-    } else if (strncasecmp(line, "Sec-WebSocket-Version", 21) == 0) {
+    } else if (strcasecmp(line, "Sec-WebSocket-Version") == 0) {
       version_ok = (strcmp(value, "13") == 0);
-    } else if (strncasecmp(line, "Sec-WebSocket-Key", 17) == 0) {
+    } else if (strcasecmp(line, "Sec-WebSocket-Key") == 0) {
       const size_t value_len = strlen(value);
       if (value_len < sizeof(sec_key)) {
         memcpy(sec_key, value, value_len + 1U);
@@ -547,6 +564,11 @@ static void process_frames(ws_conn_t *conn) {
       handle_close(conn, 1002U);
       return;
     }
+    if (opcode == WS_OP_CLOSE && payload_len == 1U) {
+      free(decoded);
+      handle_close(conn, 1002U);
+      return;
+    }
 
     if (!fin && opcode != WS_OP_CONTINUATION) {
       free(decoded);
@@ -577,10 +599,8 @@ static void process_frames(ws_conn_t *conn) {
     }
     case WS_OP_PING:
       handle_ping(conn, decoded, (size_t)payload_len);
-      free(decoded);
       break;
     case WS_OP_PONG:
-      free(decoded);
       break;
     default:
       free(decoded);
@@ -653,6 +673,14 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
                   ws_opcode_t opcode) {
   if (conn == nullptr || conn->transport.send_raw == nullptr ||
       conn->state != WS_STATE_OPEN) {
+    return;
+  }
+  if (len > 0U && data == nullptr) {
+    handle_close(conn, 1002U);
+    return;
+  }
+  if (len > SIZE_MAX - FRAME_HEADER_MAX) {
+    handle_close(conn, 1009U);
     return;
   }
   const size_t frame_size = FRAME_HEADER_MAX + len;
