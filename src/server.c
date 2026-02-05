@@ -7,8 +7,8 @@
 
 #include <uv.h>
 
-#include "server.h"
-#include "websocket.h"
+#include "websocket-server/server.h"
+#include "websocket-server/websocket.h"
 
 constexpr size_t READ_CHUNK = 4'096;
 static uv_loop_t *g_loop = nullptr;

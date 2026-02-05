@@ -4,7 +4,7 @@
 #include <string.h>
 #include <strings.h>
 
-#include "websocket.h"
+#include "websocket-server/websocket.h"
 
 constexpr size_t INITIAL_BUFFER_CAP = 4'096;
 constexpr size_t MAX_CONTROL_PAYLOAD = 125U;

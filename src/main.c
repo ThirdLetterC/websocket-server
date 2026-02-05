@@ -6,10 +6,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <uv.h>
 
-#include "server.h"
-#include "websocket.h"
+#include "websocket-server/server.h"
+#include "websocket-server/websocket.h"
 
 /**
  * @brief Application-level callback triggered when a WebSocket handshake

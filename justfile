@@ -37,4 +37,4 @@ test-client:
 # Format all source files
 fmt:
 	zig fmt build.zig
-	clang-format -i src/*.c src/*.h
+	clang-format -i src/*.c include/websocket-server/*.h

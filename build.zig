@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // Include the current directory for headers
-    exe.addIncludePath(b.path("src"));
+    exe.addIncludePath(b.path("include"));
 
     // Link against system libuv
     // This requires libuv headers and libraries to be in standard system paths.
