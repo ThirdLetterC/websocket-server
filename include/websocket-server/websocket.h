@@ -1,5 +1,4 @@
-#ifndef WEBSOCKET_H
-#define WEBSOCKET_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -82,5 +81,3 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
  * @return Non-owning pointer previously provided by the application.
  */
 [[nodiscard]] void *ws_conn_get_context(ws_conn_t *conn);
-
-#endif // WEBSOCKET_H
