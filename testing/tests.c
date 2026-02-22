@@ -245,7 +245,8 @@ static bool feed_unmasked_frame(test_fixture_t *fixture, uint8_t first_byte,
 [[nodiscard]]
 static bool last_send_is_close_with_code(const test_fixture_t *fixture,
                                          uint16_t code) {
-  if (fixture->transport.last_data == nullptr || fixture->transport.last_len != 4U) {
+  if (fixture->transport.last_data == nullptr ||
+      fixture->transport.last_len != 4U) {
     return false;
   }
   if (fixture->transport.last_data[0] != 0x88U ||
@@ -387,6 +388,23 @@ static void test_text_frame_dispatches_message_callback() {
   fixture_deinit(&fixture);
 }
 
+static void test_text_frame_invalid_utf8_results_1007() {
+  test_fixture_t fixture;
+  CHECK(fixture_init(&fixture));
+  do_handshake(&fixture);
+  reset_transport_observation(&fixture);
+
+  static constexpr uint8_t payload[] = {0xC0U, 0xAFU};
+  CHECK(feed_masked_frame(&fixture, 0x80U | WS_OP_TEXT, payload,
+                          sizeof(payload)));
+
+  CHECK(fixture.callbacks.on_message_calls == 0U);
+  CHECK(fixture.transport.closed);
+  CHECK(last_send_is_close_with_code(&fixture, 1007U));
+
+  fixture_deinit(&fixture);
+}
+
 static void test_extended_126_frame_dispatches_message_callback() {
   test_fixture_t fixture;
   CHECK(fixture_init(&fixture));
@@ -424,7 +442,8 @@ static void test_extended_127_frame_dispatches_binary_callback() {
   CHECK(fixture.callbacks.on_message_calls == 1U);
   CHECK(fixture.callbacks.last_opcode == WS_OP_BINARY);
   CHECK(fixture.callbacks.last_message_len == LARGE_MESSAGE_LEN);
-  CHECK(fixture.callbacks.last_payload_len == sizeof(fixture.callbacks.last_payload));
+  CHECK(fixture.callbacks.last_payload_len ==
+        sizeof(fixture.callbacks.last_payload));
   CHECK(memcmp(fixture.callbacks.last_payload, payload,
                sizeof(fixture.callbacks.last_payload)) == 0);
 
@@ -851,6 +870,7 @@ int main() {
   test_handshake_invalid_request_line_returns_http_400();
   test_handshake_oversized_header_returns_http_400();
   test_text_frame_dispatches_message_callback();
+  test_text_frame_invalid_utf8_results_1007();
   test_extended_126_frame_dispatches_message_callback();
   test_extended_127_frame_dispatches_binary_callback();
   test_ping_generates_pong_frame();

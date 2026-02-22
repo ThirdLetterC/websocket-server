@@ -7,6 +7,7 @@
 #include "websocket-server/websocket.h"
 
 constexpr size_t INITIAL_BUFFER_CAP = 4'096;
+constexpr size_t FEED_CHUNK_MAX = 4'096U;
 constexpr size_t MAX_CONTROL_PAYLOAD = 125U;
 constexpr size_t MAX_MESSAGE_PAYLOAD = 1'048'576U; // 1 MiB upper bound
 constexpr size_t SHA1_BLOCK_SIZE = 64U;
@@ -786,6 +787,12 @@ static void process_frames(ws_conn_t *conn) {
 
     switch (opcode) {
     case WS_OP_TEXT:
+      if (!utf8_is_valid(decoded, (size_t)payload_len)) {
+        free(decoded);
+        handle_close(conn, 1007U);
+        return;
+      }
+      [[fallthrough]];
     case WS_OP_BINARY:
       if (conn->callbacks.on_message != nullptr) {
         conn->callbacks.on_message(conn, decoded, (size_t)payload_len,
@@ -861,19 +868,49 @@ void ws_conn_feed(ws_conn_t *conn, const uint8_t *data, size_t len) {
     return;
   }
 
-  if (!ws_buffer_append(&conn->inbound, data, len)) {
-    handle_close(conn, 1011U);
-    return;
-  }
-
-  if (conn->state == WS_STATE_HANDSHAKE) {
-    if (!handle_handshake(conn)) {
+  size_t offset = 0U;
+  while (offset < len) {
+    if (conn->state == WS_STATE_CLOSING || conn->state == WS_STATE_CLOSED) {
       return;
     }
-  }
 
-  if (conn->state == WS_STATE_OPEN) {
-    process_frames(conn);
+    size_t chunk_len = len - offset;
+    if (chunk_len > FEED_CHUNK_MAX) {
+      chunk_len = FEED_CHUNK_MAX;
+    }
+
+    if (conn->state == WS_STATE_HANDSHAKE) {
+      if (conn->inbound.len >= MAX_HANDSHAKE_HEADER) {
+        conn->state = WS_STATE_CLOSING;
+        send_http_error_and_close(conn);
+        return;
+      }
+
+      const size_t handshake_room = MAX_HANDSHAKE_HEADER - conn->inbound.len;
+      if (chunk_len > handshake_room) {
+        chunk_len = handshake_room;
+      }
+    }
+
+    if (!ws_buffer_append(&conn->inbound, data + offset, chunk_len)) {
+      if (conn->state == WS_STATE_HANDSHAKE) {
+        conn->state = WS_STATE_CLOSING;
+        if (conn->transport.close != nullptr) {
+          conn->transport.close(&conn->transport);
+        }
+      } else {
+        handle_close(conn, 1011U);
+      }
+      return;
+    }
+    offset += chunk_len;
+
+    if (conn->state == WS_STATE_HANDSHAKE && !handle_handshake(conn)) {
+      continue;
+    }
+    if (conn->state == WS_STATE_OPEN) {
+      process_frames(conn);
+    }
   }
 }
 
