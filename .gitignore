@@ -11,3 +11,5 @@ zig-*/
 # Editor settings
 .vscode/
 *.swp
+
+*.gcov
