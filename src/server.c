@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -30,6 +31,7 @@ typedef struct {
 } client_ctx_t;
 
 static void on_uv_client_closed(uv_handle_t *handle);
+static void transport_close(ws_transport_t *self);
 
 static bool is_client_handle(uv_handle_t *handle) {
   if (uv_handle_get_type(handle) != UV_TCP) {
@@ -70,7 +72,13 @@ void server_request_shutdown() {
 
 [[nodiscard]] ws_callbacks_t server_get_callbacks() { return g_callbacks; }
 
-static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
+static void on_uv_write(uv_write_t *req, int status) {
+  if (status < 0 && req->handle != nullptr) {
+    auto ctx = (client_ctx_t *)req->handle->data;
+    if (ctx != nullptr) {
+      transport_close(&ctx->transport);
+    }
+  }
   auto ctx = (write_ctx_t *)req;
   free(ctx->buffer);
   free(ctx);
@@ -78,16 +86,32 @@ static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
 
 static void transport_send_raw(ws_transport_t *self, const uint8_t *data,
                                size_t len) {
+  if (self == nullptr) {
+    return;
+  }
+  if (len == 0U) {
+    return;
+  }
+  if (data == nullptr || len > UINT_MAX) {
+    transport_close(self);
+    return;
+  }
+
   auto ctx = (client_ctx_t *)self->user_data;
+  if (ctx == nullptr) {
+    return;
+  }
 
   auto write_ctx = (write_ctx_t *)calloc(1, sizeof(write_ctx_t));
   if (write_ctx == nullptr) {
+    transport_close(self);
     return;
   }
 
   write_ctx->buffer = (uint8_t *)calloc(len, sizeof(uint8_t));
   if (write_ctx->buffer == nullptr) {
     free(write_ctx);
+    transport_close(self);
     return;
   }
 
@@ -100,6 +124,7 @@ static void transport_send_raw(ws_transport_t *self, const uint8_t *data,
     fprintf(stderr, "uv_write failed: %s\n", uv_strerror(write_status));
     free(write_ctx->buffer);
     free(write_ctx);
+    transport_close(self);
   }
 }
 

@@ -272,7 +272,11 @@ static bool contains_token(const char *haystack, const char *needle) {
     while (*p != '\0' && *p != ',') {
       ++p;
     }
-    const size_t len = (size_t)(p - start);
+    const char *end = p;
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+      --end;
+    }
+    const size_t len = (size_t)(end - start);
     if (len == needle_len && strncasecmp(start, needle, needle_len) == 0) {
       return true;
     }
@@ -281,6 +285,27 @@ static bool contains_token(const char *haystack, const char *needle) {
     }
   }
   return false;
+}
+
+[[nodiscard]]
+static bool request_line_is_valid(const char *line) {
+  const char *method_end = strchr(line, ' ');
+  if (method_end == nullptr || method_end != line + 3U ||
+      strncmp(line, "GET", 3U) != 0) {
+    return false;
+  }
+
+  const char *target = method_end + 1U;
+  if (*target == '\0') {
+    return false;
+  }
+
+  const char *version_sep = strchr(target, ' ');
+  if (version_sep == nullptr || version_sep == target) {
+    return false;
+  }
+
+  return strcmp(version_sep + 1U, "HTTP/1.1") == 0;
 }
 
 [[nodiscard]]
@@ -368,17 +393,30 @@ static bool handle_handshake(ws_conn_t *conn) {
     }
     return false;
   }
+  if (header_end > MAX_HANDSHAKE_HEADER) {
+    conn->state = WS_STATE_CLOSING;
+    send_http_error_and_close(conn);
+    return false;
+  }
 
   auto request = (char *)calloc(header_end + 1U, sizeof(char));
   if (request == nullptr) {
+    conn->state = WS_STATE_CLOSING;
     send_http_error_and_close(conn);
     return false;
   }
   memcpy(request, conn->inbound.data, header_end);
 
-  char *line = strtok(request, "\r\n");
-  if (line == nullptr || strncmp(line, "GET ", 4) != 0 ||
-      strstr(line, "HTTP/1.1") == nullptr) {
+  char *line_end = strstr(request, "\r\n");
+  if (line_end == nullptr) {
+    free(request);
+    conn->state = WS_STATE_CLOSING;
+    send_http_error_and_close(conn);
+    return false;
+  }
+  *line_end = '\0';
+
+  if (!request_line_is_valid(request)) {
     free(request);
     conn->state = WS_STATE_CLOSING;
     send_http_error_and_close(conn);
@@ -390,9 +428,23 @@ static bool handle_handshake(ws_conn_t *conn) {
   bool version_ok = false;
   char sec_key[SEC_KEY_MAX] = {0};
 
-  while ((line = strtok(nullptr, "\r\n")) != nullptr) {
+  char *line = line_end + 2U;
+  while (*line != '\0') {
+    char *next_line_end = strstr(line, "\r\n");
+    if (next_line_end == nullptr) {
+      free(request);
+      conn->state = WS_STATE_CLOSING;
+      send_http_error_and_close(conn);
+      return false;
+    }
+    *next_line_end = '\0';
+    if (*line == '\0') {
+      break;
+    }
+
     char *colon = strchr(line, ':');
-    if (colon == nullptr) {
+    if (colon == nullptr || colon == line) {
+      line = next_line_end + 2U;
       continue;
     }
     *colon = '\0';
@@ -400,19 +452,24 @@ static bool handle_handshake(ws_conn_t *conn) {
     while (*value == ' ' || *value == '\t') {
       ++value;
     }
+    size_t value_len = strlen(value);
+    while (value_len > 0U &&
+           (value[value_len - 1U] == ' ' || value[value_len - 1U] == '\t')) {
+      value[--value_len] = '\0';
+    }
 
     if (strcasecmp(line, "Upgrade") == 0) {
-      has_upgrade = contains_token(value, "websocket");
+      has_upgrade = has_upgrade || contains_token(value, "websocket");
     } else if (strcasecmp(line, "Connection") == 0) {
-      has_connection = contains_token(value, "Upgrade");
+      has_connection = has_connection || contains_token(value, "Upgrade");
     } else if (strcasecmp(line, "Sec-WebSocket-Version") == 0) {
-      version_ok = (strcmp(value, "13") == 0);
+      version_ok = version_ok || strcmp(value, "13") == 0;
     } else if (strcasecmp(line, "Sec-WebSocket-Key") == 0) {
-      const size_t value_len = strlen(value);
       if (value_len < sizeof(sec_key)) {
         memcpy(sec_key, value, value_len + 1U);
       }
     }
+    line = next_line_end + 2U;
   }
 
   free(request);
@@ -467,6 +524,10 @@ static void handle_ping(ws_conn_t *conn, const uint8_t *payload,
   header[0] = 0x80U | WS_OP_PONG;
   header[1] = (uint8_t)payload_len;
 
+  if (payload_len > SIZE_MAX - header_len) {
+    handle_close(conn, 1011U);
+    return;
+  }
   const size_t frame_len = header_len + payload_len;
   auto frame = (uint8_t *)calloc(frame_len, sizeof(uint8_t));
   if (frame == nullptr) {
@@ -504,6 +565,18 @@ static void process_frames(ws_conn_t *conn) {
       handle_close(conn, 1002U);
       return;
     }
+    if (opcode > WS_OP_PONG || (opcode > WS_OP_BINARY && opcode < WS_OP_CLOSE)) {
+      handle_close(conn, 1002U);
+      return;
+    }
+
+    const bool is_control = opcode >= WS_OP_CLOSE;
+    if (opcode == WS_OP_CONTINUATION ||
+        (!fin && (opcode == WS_OP_TEXT || opcode == WS_OP_BINARY)) ||
+        (is_control && !fin)) {
+      handle_close(conn, 1002U);
+      return;
+    }
 
     size_t header_len = 2U;
     if (payload_len == 126U) {
@@ -512,14 +585,26 @@ static void process_frames(ws_conn_t *conn) {
       }
       payload_len =
           ((uint64_t)conn->inbound.data[2] << 8U) | conn->inbound.data[3];
+      if (payload_len < 126U) {
+        handle_close(conn, 1002U);
+        return;
+      }
       header_len += 2U;
     } else if (payload_len == 127U) {
       if (conn->inbound.len < 10U) {
         return;
       }
+      if ((conn->inbound.data[2] & 0x80U) != 0U) {
+        handle_close(conn, 1002U);
+        return;
+      }
       payload_len = 0U;
       for (size_t i = 0U; i < 8U; ++i) {
         payload_len = (payload_len << 8U) | conn->inbound.data[2U + i];
+      }
+      if (payload_len <= 65'535U) {
+        handle_close(conn, 1002U);
+        return;
       }
       header_len += 8U;
     }
@@ -532,6 +617,14 @@ static void process_frames(ws_conn_t *conn) {
 
     if (payload_len > MAX_MESSAGE_PAYLOAD || payload_len > SIZE_MAX) {
       handle_close(conn, 1009U);
+      return;
+    }
+    if (is_control && payload_len > MAX_CONTROL_PAYLOAD) {
+      handle_close(conn, 1002U);
+      return;
+    }
+    if (opcode == WS_OP_CLOSE && payload_len == 1U) {
+      handle_close(conn, 1002U);
       return;
     }
 
@@ -558,24 +651,6 @@ static void process_frames(ws_conn_t *conn) {
       decoded[i] = (uint8_t)(payload[i] ^ mask_key[i % 4U]);
     }
 
-    const bool is_control = opcode >= 0x8U;
-    if (is_control && (!fin || payload_len > MAX_CONTROL_PAYLOAD)) {
-      free(decoded);
-      handle_close(conn, 1002U);
-      return;
-    }
-    if (opcode == WS_OP_CLOSE && payload_len == 1U) {
-      free(decoded);
-      handle_close(conn, 1002U);
-      return;
-    }
-
-    if (!fin && opcode != WS_OP_CONTINUATION) {
-      free(decoded);
-      handle_close(conn, 1002U);
-      return;
-    }
-
     switch (opcode) {
     case WS_OP_TEXT:
     case WS_OP_BINARY:
@@ -584,10 +659,6 @@ static void process_frames(ws_conn_t *conn) {
                                    (ws_opcode_t)opcode);
       }
       break;
-    case WS_OP_CONTINUATION:
-      free(decoded);
-      handle_close(conn, 1002U);
-      return;
     case WS_OP_CLOSE: {
       uint16_t code = 1000U;
       if (payload_len >= 2U) {
@@ -677,6 +748,22 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
   }
   if (len > 0U && data == nullptr) {
     handle_close(conn, 1002U);
+    return;
+  }
+  if ((uint8_t)opcode > WS_OP_PONG ||
+      ((uint8_t)opcode > WS_OP_BINARY && (uint8_t)opcode < WS_OP_CLOSE) ||
+      opcode == WS_OP_CONTINUATION) {
+    handle_close(conn, 1002U);
+    return;
+  }
+  const bool is_control = (uint8_t)opcode >= WS_OP_CLOSE;
+  if (is_control && (len > MAX_CONTROL_PAYLOAD ||
+                     (opcode == WS_OP_CLOSE && len == 1U))) {
+    handle_close(conn, 1002U);
+    return;
+  }
+  if (!is_control && len > MAX_MESSAGE_PAYLOAD) {
+    handle_close(conn, 1009U);
     return;
   }
   if (len > SIZE_MAX - FRAME_HEADER_MAX) {
