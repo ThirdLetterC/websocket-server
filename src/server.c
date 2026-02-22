@@ -140,6 +140,9 @@ static void on_uv_client_closed(uv_handle_t *handle) {
 }
 
 static void transport_close(ws_transport_t *self) {
+  if (self == nullptr) {
+    return;
+  }
   auto ctx = (client_ctx_t *)self->user_data;
   if (ctx == nullptr) {
     return;
@@ -216,6 +219,10 @@ void start_ws_server(int32_t port, ws_callbacks_t callbacks) {
 
   g_shutdown_requested = false;
   g_loop = uv_default_loop();
+  if (g_loop == nullptr) {
+    fprintf(stderr, "uv_default_loop failed\n");
+    return;
+  }
   int run_status = 0;
 
   const int tcp_status = uv_tcp_init(g_loop, &g_server);
@@ -257,9 +264,11 @@ cleanup:
     (void)uv_run(g_loop, UV_RUN_DEFAULT);
   }
 
-  const int loop_status = uv_loop_close(g_loop);
-  if (loop_status != 0) {
-    fprintf(stderr, "uv_loop_close failed: %s\n", uv_strerror(loop_status));
+  if (g_loop != nullptr) {
+    const int loop_status = uv_loop_close(g_loop);
+    if (loop_status != 0) {
+      fprintf(stderr, "uv_loop_close failed: %s\n", uv_strerror(loop_status));
+    }
   }
   g_loop = nullptr;
 

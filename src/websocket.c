@@ -123,7 +123,11 @@ static void ws_buffer_consume(ws_buffer_t *buffer, size_t count) {
 
 [[nodiscard]]
 static uint32_t sha1_rotl(uint32_t value, uint32_t shift) {
-  return (value << shift) | (value >> (32U - shift));
+  const uint32_t normalized_shift = shift & 31U;
+  if (normalized_shift == 0U) {
+    return value;
+  }
+  return (value << normalized_shift) | (value >> (32U - normalized_shift));
 }
 
 static void sha1_init(sha1_ctx_t *ctx) {
@@ -235,6 +239,12 @@ static bool base64_encode(const uint8_t *input, size_t len, char *out,
                           size_t out_size) {
   constexpr char table[] =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if (len > (SIZE_MAX - 2U) / 3U) {
+    if (out_size > 0U) {
+      out[0] = '\0';
+    }
+    return false;
+  }
   const size_t encoded_len = ((len + 2U) / 3U) * 4U;
   if (out_size < encoded_len + 1U) {
     if (out_size > 0U) {
@@ -285,6 +295,126 @@ static bool contains_token(const char *haystack, const char *needle) {
     }
   }
   return false;
+}
+
+[[nodiscard]]
+static bool close_code_is_valid(uint16_t code) {
+  if (code < 1000U || code >= 5000U) {
+    return false;
+  }
+  switch (code) {
+  case 1004U:
+  case 1005U:
+  case 1006U:
+  case 1015U:
+    return false;
+  default:
+    return true;
+  }
+}
+
+[[nodiscard]]
+static bool is_utf8_continuation(uint8_t byte) {
+  return (byte & 0xC0U) == 0x80U;
+}
+
+[[nodiscard]]
+static bool utf8_is_valid(const uint8_t *data, size_t len) {
+  size_t i = 0U;
+  while (i < len) {
+    const uint8_t lead = data[i++];
+    if (lead <= 0x7FU) {
+      continue;
+    }
+    if (lead >= 0xC2U && lead <= 0xDFU) {
+      if (i >= len || !is_utf8_continuation(data[i])) {
+        return false;
+      }
+      ++i;
+      continue;
+    }
+    if (lead == 0xE0U) {
+      if (i + 1U >= len || data[i] < 0xA0U || data[i] > 0xBFU ||
+          !is_utf8_continuation(data[i + 1U])) {
+        return false;
+      }
+      i += 2U;
+      continue;
+    }
+    if ((lead >= 0xE1U && lead <= 0xECU) || (lead >= 0xEEU && lead <= 0xEFU)) {
+      if (i + 1U >= len || !is_utf8_continuation(data[i]) ||
+          !is_utf8_continuation(data[i + 1U])) {
+        return false;
+      }
+      i += 2U;
+      continue;
+    }
+    if (lead == 0xEDU) {
+      if (i + 1U >= len || data[i] < 0x80U || data[i] > 0x9FU ||
+          !is_utf8_continuation(data[i + 1U])) {
+        return false;
+      }
+      i += 2U;
+      continue;
+    }
+    if (lead == 0xF0U) {
+      if (i + 2U >= len || data[i] < 0x90U || data[i] > 0xBFU ||
+          !is_utf8_continuation(data[i + 1U]) ||
+          !is_utf8_continuation(data[i + 2U])) {
+        return false;
+      }
+      i += 3U;
+      continue;
+    }
+    if (lead >= 0xF1U && lead <= 0xF3U) {
+      if (i + 2U >= len || !is_utf8_continuation(data[i]) ||
+          !is_utf8_continuation(data[i + 1U]) ||
+          !is_utf8_continuation(data[i + 2U])) {
+        return false;
+      }
+      i += 3U;
+      continue;
+    }
+    if (lead == 0xF4U) {
+      if (i + 2U >= len || data[i] < 0x80U || data[i] > 0x8FU ||
+          !is_utf8_continuation(data[i + 1U]) ||
+          !is_utf8_continuation(data[i + 2U])) {
+        return false;
+      }
+      i += 3U;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+[[nodiscard]]
+static uint16_t close_payload_validation_error(const uint8_t *payload,
+                                               size_t payload_len,
+                                               uint16_t *code_out) {
+  if (payload_len == 0U) {
+    if (code_out != nullptr) {
+      *code_out = 1000U;
+    }
+    return 0U;
+  }
+  if (payload == nullptr || payload_len == 1U) {
+    return 1002U;
+  }
+
+  const uint16_t code = ((uint16_t)payload[0] << 8U) | payload[1];
+  if (!close_code_is_valid(code)) {
+    return 1002U;
+  }
+  if (payload_len > 2U && !utf8_is_valid(payload + 2U, payload_len - 2U)) {
+    return 1007U;
+  }
+
+  if (code_out != nullptr) {
+    *code_out = code;
+  }
+  return 0U;
 }
 
 [[nodiscard]]
@@ -444,8 +574,10 @@ static bool handle_handshake(ws_conn_t *conn) {
 
     char *colon = strchr(line, ':');
     if (colon == nullptr || colon == line) {
-      line = next_line_end + 2U;
-      continue;
+      free(request);
+      conn->state = WS_STATE_CLOSING;
+      send_http_error_and_close(conn);
+      return false;
     }
     *colon = '\0';
     char *value = colon + 1;
@@ -565,7 +697,8 @@ static void process_frames(ws_conn_t *conn) {
       handle_close(conn, 1002U);
       return;
     }
-    if (opcode > WS_OP_PONG || (opcode > WS_OP_BINARY && opcode < WS_OP_CLOSE)) {
+    if (opcode > WS_OP_PONG ||
+        (opcode > WS_OP_BINARY && opcode < WS_OP_CLOSE)) {
       handle_close(conn, 1002U);
       return;
     }
@@ -661,8 +794,12 @@ static void process_frames(ws_conn_t *conn) {
       break;
     case WS_OP_CLOSE: {
       uint16_t code = 1000U;
-      if (payload_len >= 2U) {
-        code = ((uint16_t)decoded[0] << 8U) | decoded[1];
+      const uint16_t validation_error =
+          close_payload_validation_error(decoded, (size_t)payload_len, &code);
+      if (validation_error != 0U) {
+        free(decoded);
+        handle_close(conn, validation_error);
+        return;
       }
       free(decoded);
       handle_close(conn, code);
@@ -757,14 +894,23 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
     return;
   }
   const bool is_control = (uint8_t)opcode >= WS_OP_CLOSE;
-  if (is_control && (len > MAX_CONTROL_PAYLOAD ||
-                     (opcode == WS_OP_CLOSE && len == 1U))) {
+  if (is_control &&
+      (len > MAX_CONTROL_PAYLOAD || (opcode == WS_OP_CLOSE && len == 1U))) {
     handle_close(conn, 1002U);
     return;
   }
   if (!is_control && len > MAX_MESSAGE_PAYLOAD) {
     handle_close(conn, 1009U);
     return;
+  }
+  if (opcode == WS_OP_CLOSE) {
+    uint16_t code = 1000U;
+    const uint16_t validation_error =
+        close_payload_validation_error(data, len, &code);
+    if (validation_error != 0U) {
+      handle_close(conn, validation_error);
+      return;
+    }
   }
   if (len > SIZE_MAX - FRAME_HEADER_MAX) {
     handle_close(conn, 1009U);
@@ -788,8 +934,10 @@ void ws_conn_send(ws_conn_t *conn, const uint8_t *data, size_t len,
     frame[offset++] = (uint8_t)(len & 0xFFU);
   } else {
     frame[offset++] = 127U;
-    for (int shift = 56; shift >= 0; shift -= 8) {
-      frame[offset++] = (uint8_t)((len >> shift) & 0xFFU);
+    const uint64_t len64 = (uint64_t)len;
+    for (size_t i = 0U; i < 8U; ++i) {
+      const uint32_t shift = (uint32_t)((7U - i) * 8U);
+      frame[offset++] = (uint8_t)((len64 >> shift) & 0xFFU);
     }
   }
 

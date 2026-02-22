@@ -9,6 +9,10 @@ default:
 build:
 	zig build
 
+# Run tests
+test:
+	zig build test
+
 # Run the server (accepts optional port argument)
 run p=port:
 	zig build run -- {{p}}
@@ -37,4 +41,4 @@ test-client:
 # Format all source files
 fmt:
 	zig fmt build.zig
-	clang-format -i src/*.c include/websocket-server/*.h
+	clang-format -i src/*.c include/websocket-server/*.h examples/*.c testing/*.c

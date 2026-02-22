@@ -46,6 +46,22 @@ pub fn build(b: *std.Build) void {
 
     const c_flags = if (use_sanitizers) debug_flags else common_flags;
 
+    const simple_exe = b.addExecutable(.{
+        .name = "ws_simple",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const unit_tests = b.addExecutable(.{
+        .name = "ws_unit_tests",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // Add C source files
     exe.addCSourceFiles(.{
         .root = b.path("src"),
@@ -60,6 +76,27 @@ pub fn build(b: *std.Build) void {
     // Include the current directory for headers
     exe.addIncludePath(b.path("include"));
 
+    simple_exe.addCSourceFiles(.{
+        .files = &.{
+            "examples/simple.c",
+            "src/server.c",
+            "src/websocket.c",
+        },
+        .flags = c_flags,
+    });
+
+    simple_exe.addIncludePath(b.path("include"));
+
+    unit_tests.addCSourceFiles(.{
+        .files = &.{
+            "testing/tests.c",
+            "src/websocket.c",
+        },
+        .flags = c_flags,
+    });
+
+    unit_tests.addIncludePath(b.path("include"));
+
     if (use_sanitizers) {
         exe.bundle_compiler_rt = true;
         exe.bundle_ubsan_rt = true;
@@ -68,14 +105,33 @@ pub fn build(b: *std.Build) void {
             exe.root_module.linkSystemLibrary("ubsan", .{ .use_pkg_config = .no });
             exe.root_module.linkSystemLibrary("lsan", .{ .use_pkg_config = .no });
         }
+
+        simple_exe.bundle_compiler_rt = true;
+        simple_exe.bundle_ubsan_rt = true;
+        if (!linkSanitizers(b, simple_exe, target)) {
+            simple_exe.root_module.linkSystemLibrary("asan", .{ .use_pkg_config = .no });
+            simple_exe.root_module.linkSystemLibrary("ubsan", .{ .use_pkg_config = .no });
+            simple_exe.root_module.linkSystemLibrary("lsan", .{ .use_pkg_config = .no });
+        }
+
+        unit_tests.bundle_compiler_rt = true;
+        unit_tests.bundle_ubsan_rt = true;
+        if (!linkSanitizers(b, unit_tests, target)) {
+            unit_tests.root_module.linkSystemLibrary("asan", .{ .use_pkg_config = .no });
+            unit_tests.root_module.linkSystemLibrary("ubsan", .{ .use_pkg_config = .no });
+            unit_tests.root_module.linkSystemLibrary("lsan", .{ .use_pkg_config = .no });
+        }
     }
 
     // Link against system libuv
     // This requires libuv headers and libraries to be in standard system paths.
     exe.linkSystemLibrary("uv");
+    simple_exe.linkSystemLibrary("uv");
 
     // Link against the C standard library
     exe.linkLibC();
+    simple_exe.linkLibC();
+    unit_tests.linkLibC();
 
     // If you add crypto for handshakes (e.g., OpenSSL), link it here:
     // exe.linkSystemLibrary("ssl");
@@ -83,6 +139,7 @@ pub fn build(b: *std.Build) void {
 
     // Install the artifact (moves it to zig-out/bin)
     b.installArtifact(exe);
+    b.installArtifact(simple_exe);
 
     // Create a 'run' step to execute the server directly via 'zig build run'
     const run_cmd = b.addRunArtifact(exe);
@@ -94,6 +151,20 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the WebSocket server");
     run_step.dependOn(&run_cmd.step);
+
+    const run_simple_cmd = b.addRunArtifact(simple_exe);
+    run_simple_cmd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        run_simple_cmd.addArgs(args);
+    }
+
+    const run_simple_step = b.step("run-simple", "Run the simple demo server");
+    run_simple_step.dependOn(&run_simple_cmd.step);
+
+    const run_tests_cmd = b.addRunArtifact(unit_tests);
+    const tests_step = b.step("test", "Run unit tests");
+    tests_step.dependOn(&run_tests_cmd.step);
 }
 
 const SanitizerTriplet = struct {

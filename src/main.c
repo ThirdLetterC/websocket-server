@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     errno = 0;
     const auto parsed = strtol(argv[1], &end, 10);
     const bool valid = (errno == 0) && (end != argv[1]) && (*end == '\0');
-    if (valid && parsed > 0 && parsed <= INT32_MAX) {
+    if (valid && parsed > 0 && parsed <= UINT16_MAX) {
       port = (int32_t)parsed;
     } else {
       fprintf(stderr, "Invalid port '%s', falling back to %" PRId32 "\n",
@@ -85,6 +85,10 @@ int main(int argc, char **argv) {
   printf("Starting WebSocket Echo Server on port %" PRId32 "...\n", port);
 
   auto loop = uv_default_loop();
+  if (loop == nullptr) {
+    fprintf(stderr, "uv_default_loop failed\n");
+    return EXIT_FAILURE;
+  }
   uv_signal_t sigint_handle;
   uv_signal_t sigterm_handle;
 

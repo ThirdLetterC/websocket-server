@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "websocket.h"
+#include "websocket-server/websocket.h"
 
 void server_set_callbacks(ws_callbacks_t callbacks);
 [[nodiscard]] ws_callbacks_t server_get_callbacks();
