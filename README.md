@@ -33,7 +33,7 @@ Minimal WebSocket echo server written in strict C23 with a libuv transport layer
 ## Quick Test
 - Connect with a WebSocket client: `wscat -c ws://localhost:8080`.
 - Send `ping` to receive `pong`, or send any text/binary payload to see it echoed.
-- A basic k6 script is available at `test/ws_test.js` for light load checks.
+- A basic k6 script is available at `ws_test.js` for light load checks.
 
 ## Project Layout
 - `src/main.c` — wires CLI args, signal handling, and application callbacks.
